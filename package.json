@@ -1,10 +1,10 @@
 {
-  "name": "context-graph-memory",
+  "name": "greplica",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "bin": {
-    "ec": "dist/apps/cli/main.js"
+    "greplica": "dist/apps/cli/main.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
