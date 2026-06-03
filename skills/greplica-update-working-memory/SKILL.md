@@ -30,7 +30,18 @@ Use the current conversation/session context plus code evidence. Read:
 
 Use the current session as context, but verify durable code facts against files or diffs when possible.
 
-When you have a transcript file, scan it deliberately. Prioritize user messages and final accepted decisions over assistant suggestions, and search around terms such as `source`, `evidence`, `session`, `reason`, `metadata`, `future`, `next`, `later`, `out of scope`, `not built`, `proposal`, `eval`, `fixture`, `rubric`, `wrong`, `reject`, `don't`, and `instead`.
+When you have a transcript file, run this transcript extraction workflow before writing the proposal:
+
+1. Get the transcript line count, then read every line in chunks if needed.
+2. Build a candidate inventory from the transcript before relying on code diffs or final assistant summaries.
+3. Put candidates into buckets: code facts, flow facts, user constraints, rationale, trade-offs/rejected alternatives, negative decisions/do-not-do rules, deferred work/future work, drift, and eval/fixture/testing/process constraints.
+4. For each candidate, record the source line/message, intended memory role, and whether it should be code_verified, source_verified, unknown, or dropped.
+5. Drop only candidates that are transient, duplicate, unsupported, obvious from local code, or not useful to a future agent.
+6. Keep explicit user corrections, "do not" statements, "not built" statements, and eval/process constraints unless they are clearly transient.
+7. Write one focused claim per kept durable candidate. Do not merge candidates from different buckets into one broad claim.
+8. Before validating, review dropped candidates and re-add any durable session decision that would be hard to recover from code alone.
+
+Prioritize user messages and final accepted decisions over assistant suggestions. Search around terms such as `source`, `evidence`, `session`, `reason`, `metadata`, `future`, `next`, `later`, `out of scope`, `not built`, `proposal`, `eval`, `fixture`, `rubric`, `wrong`, `reject`, `don't`, and `instead`.
 
 When creating a session source, derive its identity from the actual session:
 
@@ -67,6 +78,8 @@ Create memory for durable changes only:
 
 When existing memory is now too vague or stale, create a clearer claim with `supersedes[]` pointing at the old claim. In particular, look for old claims returned by `greplica graph context` that describe the changed area broadly but miss the new session nuance. A claim can be worth superseding even when the old text is not false, if it is now materially incomplete and future agents would be misled by leaving it active.
 
+If a new claim materially narrows, qualifies, or corrects an existing claim returned by `greplica graph context`, encode that relationship with `supersedes[]`; do not rely on wording alone. Before validating, review the proposal for changed validation rules, compact relationship behavior, and workflow claims that should supersede older broad memory.
+
 Do not store:
 
 - temporary debugging chatter
@@ -77,6 +90,12 @@ Do not store:
 - claims based only on vague conversation unless marked `unknown`
 
 Do not stop at patch-visible facts. Also extract non-obvious session nuance: why the code was shaped this way, what alternatives were rejected, what future work was deferred, and what implicit drift the implementation introduced.
+
+Keep distinct durable memories distinct. "Small update" means no transcript junk or unnecessary implementation detail; it does not mean merging separate code facts, constraints, rationales, trade-offs, drift, tasks, and future work into one broad claim. If the session contains separate durable statements, create separate focused claims with the right claim kind and truth value.
+
+Preserve explicit negative or deferred decisions as first-class memory when they affect future work. Examples include "do not create code sources from code inspection", "proposal JSON remains the primitive", "a session ingest command was discussed but not built", "fixed eval fixtures should stay stable", and "compact shorthand still exists but no longer satisfies reasoned evidence validation".
+
+Avoid broad code-verified claims about entire skills or workflows unless every part was verified against the patch. Prefer narrower claims tied to exact code/doc changes, and keep rationale or policy from the transcript as separate source-verified claims.
 
 ## Proposal Format
 
@@ -137,6 +156,8 @@ Use compact relationship fields where possible:
 For source-backed claims, use explicit `edges[]` entries with `kind: "evidenced_by"` and `metadata.reason`. Do not use compact `claim.evidenced_by[]`; every evidence edge must explain why the session supports the claim.
 
 If you create a session source, connect non-code session-derived claims with `evidenced_by` edges. Code-verified claims do not need session evidence unless the claim is also recording a session decision, requirement, question, risk, trade-off, or task.
+
+Each source-backed session claim should have its own `evidenced_by` edge to the session source with a reason specific to that claim. Do not use one bundled source-backed claim to cover multiple unrelated decisions, constraints, rationales, trade-offs, drift items, tasks, or future work.
 
 ## Quality Bar
 
