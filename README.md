@@ -33,17 +33,17 @@ Then run exactly one of these commands.
 
 Codex:
 ```bash
-greplica install --platform codex --instructions user --embedding local
+greplica install --platform codex --embedding local
 ```
 
 Claude Code:
 ```bash
-greplica install --platform claude --instructions user --embedding local
+greplica install --platform claude --embedding local
 ```
 
-Do not manually copy skills or edit instruction files. Let the installer do it.
+Do not manually copy skills. Let the installer do it.
 
-After installation, tell me where the skills were installed, which user instruction file was updated, which embedding mode was configured, and whether I should restart the agent.
+After installation, tell me where the skills were installed, which embedding mode was configured, and whether I should restart the agent. Then tell me to add the Greplica guidance block manually to AGENTS.md or CLAUDE.md if I want always-on repo guidance.
 
 Then tell me how to use Greplica:
 - Run "Use greplica-bootstrap for this repo." once per repo to initialize memory.

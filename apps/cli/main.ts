@@ -17,7 +17,7 @@ import { createEmbedder } from "../../libs/knowledge-graph/graph-context/embedde
 import { compactGraphContextResult, renderGraphContextMarkdown } from "../../libs/knowledge-graph/graph-context/render.js";
 import { buildGraphFolderExport } from "../../libs/knowledge-graph/folder-export.js";
 import { installGreplica } from "../../libs/install/install.js";
-import type { InstallEmbedding, InstallPlatform, InstructionScope } from "../../libs/install/paths.js";
+import type { InstallEmbedding, InstallPlatform } from "../../libs/install/paths.js";
 import { detectRepoContext } from "./repo-context.js";
 
 interface CommandContext {
@@ -260,9 +260,8 @@ function parseOptionalEmbeddingSelection(args: string[]): EmbeddingProvider | un
   return local ? "local" : "openai";
 }
 
-function parseInstallArgs(args: string[]): { platform: InstallPlatform; instructions: InstructionScope; embedding: InstallEmbedding } {
+function parseInstallArgs(args: string[]): { platform: InstallPlatform; embedding: InstallEmbedding } {
   let platform: InstallPlatform | undefined;
-  let instructions: InstructionScope | undefined;
   let embedding: InstallEmbedding | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -276,17 +275,6 @@ function parseInstallArgs(args: string[]): { platform: InstallPlatform; instruct
     if (arg.startsWith("--platform=")) {
       if (platform !== undefined) throw new Error(`Specify --platform only once.\n${installUsage()}`);
       platform = parseInstallPlatform(arg.slice("--platform=".length));
-      continue;
-    }
-    if (arg === "--instructions") {
-      if (instructions !== undefined) throw new Error(`Specify --instructions only once.\n${installUsage()}`);
-      instructions = parseInstructionScope(requireFlagValue(args, index, "--instructions"));
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith("--instructions=")) {
-      if (instructions !== undefined) throw new Error(`Specify --instructions only once.\n${installUsage()}`);
-      instructions = parseInstructionScope(arg.slice("--instructions=".length));
       continue;
     }
     if (arg === "--embedding") {
@@ -303,8 +291,8 @@ function parseInstallArgs(args: string[]): { platform: InstallPlatform; instruct
     throw new Error(installUsage());
   }
 
-  if (platform === undefined || instructions === undefined || embedding === undefined) throw new Error(installUsage());
-  return { platform, instructions, embedding };
+  if (platform === undefined || embedding === undefined) throw new Error(installUsage());
+  return { platform, embedding };
 }
 
 function requireFlagValue(args: string[], index: number, flag: string): string {
@@ -318,11 +306,6 @@ function parseInstallPlatform(value: string): InstallPlatform {
   throw new Error(`Invalid --platform ${value}.\n${installUsage()}`);
 }
 
-function parseInstructionScope(value: string): InstructionScope {
-  if (value === "user" || value === "project" || value === "none") return value;
-  throw new Error(`Invalid --instructions ${value}.\n${installUsage()}`);
-}
-
 function parseInstallEmbedding(value: string): InstallEmbedding {
   if (value === "local" || value === "openai") return value;
   throw new Error(`Invalid --embedding ${value}.\n${installUsage()}`);
@@ -334,9 +317,6 @@ function printInstallResult(result: Awaited<ReturnType<typeof installGreplica>>)
   console.log("Skills:");
   for (const skill of result.skills) console.log(`- ${skill}`);
   console.log("");
-  console.log("Instructions:");
-  console.log(result.instructionFile === undefined ? "- not updated (--instructions none)" : `- ${result.instructionFile} updated`);
-  console.log("");
   console.log("Embedding:");
   console.log(`- ${result.embedding}`);
   console.log(`- config: ${result.configFile}`);
@@ -346,12 +326,13 @@ function printInstallResult(result: Awaited<ReturnType<typeof installGreplica>>)
   console.log("- Use greplica-bootstrap once per repo to initialize memory.");
   console.log("- During work, use greplica graph context \"<question>\" when repo context is not already in the conversation.");
   console.log("- Near the end of useful sessions, use greplica-update-working-memory to save decisions, constraints, changed flows, and follow-up work.");
+  console.log(`- Add the Greplica guidance block to ${result.platform === "codex" ? "AGENTS.md" : "CLAUDE.md"} yourself if you want always-on repo guidance.`);
   for (const note of result.notes) console.log(`- ${note}`);
 }
 
 function installUsage(): string {
   const cli = basename(process.argv[1] ?? "greplica");
-  return `Usage: ${cli} install --platform codex|claude --instructions user|project|none --embedding local|openai`;
+  return `Usage: ${cli} install --platform codex|claude --embedding local|openai`;
 }
 
 function printEmbeddingConfig(config: EmbeddingConfig): void {
@@ -416,7 +397,7 @@ function field(item: object, key: string): string {
 function printHelp(): void {
   const cli = basename(process.argv[1] ?? "greplica");
   console.log(`Usage:
-  ${cli} install --platform codex|claude --instructions user|project|none --embedding local|openai
+  ${cli} install --platform codex|claude --embedding local|openai
   ${cli} init [--local|--openai]
   ${cli} config
   ${cli} doctor [--check-embeddings]

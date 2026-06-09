@@ -1,24 +1,20 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { envVarSource, loadRepoEnv } from "../env/load-local-env.js";
 import { greplicaConfigPath, updateEmbeddingConfig, type EmbeddingProvider } from "../config/greplica-config.js";
 import { graphContextConfigFromGreplicaConfig } from "../knowledge-graph/graph-context/config.js";
 import { createLocalKnowledgeGraphService } from "../knowledge-graph/service.js";
 import type { RepoRef } from "../knowledge-graph/service.js";
-import { greplicaInstructionBlock } from "./instruction-blocks.js";
-import { replaceOrAppendSection } from "./edit-marked-section.js";
 import {
   packageRoot,
   platformPaths,
   skillNames,
   type InstallEmbedding,
   type InstallPlatform,
-  type InstructionScope,
 } from "./paths.js";
 
 export interface InstallOptions {
   platform: InstallPlatform;
-  instructions: InstructionScope;
   embedding: InstallEmbedding;
   repo: RepoRef;
 }
@@ -26,7 +22,6 @@ export interface InstallOptions {
 export interface InstallResult {
   platform: InstallPlatform;
   skills: string[];
-  instructionFile?: string;
   embedding: InstallEmbedding;
   configFile: string;
   databasePath: string;
@@ -34,13 +29,11 @@ export interface InstallResult {
 }
 
 export async function installGreplica(options: InstallOptions): Promise<InstallResult> {
-  const projectRoot = options.repo.repo_root ?? process.cwd();
-  const paths = platformPaths(options.platform, projectRoot);
-  const skills = installSkills(paths.skillsRoot);
-  const instructionFile = installInstructions(options.instructions, paths.userInstructionFile, paths.projectInstructionFile);
+  const paths = platformPaths(options.platform);
   const embedding = configureEmbedding(options.embedding, options.repo);
   const service = createLocalKnowledgeGraphService(graphContextConfigFromGreplicaConfig(embedding.config));
   const init = service.initRepo(options.repo);
+  const skills = installSkills(paths.skillsRoot);
 
   const notes: string[] = [];
   if (options.embedding === "local") {
@@ -55,7 +48,6 @@ export async function installGreplica(options: InstallOptions): Promise<InstallR
   return {
     platform: options.platform,
     skills,
-    instructionFile,
     embedding: options.embedding,
     configFile: embedding.configPath,
     databasePath: init.database_path,
@@ -83,17 +75,6 @@ function installSkills(skillsRoot: string): string[] {
 
   return installed;
 }
-
-function installInstructions(scope: InstructionScope, userFile: string, projectFile: string): string | undefined {
-  if (scope === "none") return undefined;
-  const file = scope === "user" ? userFile : projectFile;
-  const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
-  const updated = replaceOrAppendSection(existing, "## Greplica", greplicaInstructionBlock);
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, updated, "utf8");
-  return resolve(file);
-}
-
 function configureEmbedding(provider: EmbeddingProvider, repo: RepoRef): { config: ReturnType<typeof updateEmbeddingConfig>; configPath: string } {
   const repoRoot = repo.repo_root ?? process.cwd();
   if (provider === "openai") {
