@@ -1,4 +1,5 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import {
   type CommandResult,
@@ -14,6 +15,7 @@ import {
 import { runCodexAgent } from "../../../libs/agent-runner/codex.js";
 import type { AgentRunResult } from "../../../libs/agent-runner/types.js";
 import { loadRepoEnv } from "../../../libs/env/load-local-env.js";
+import { codexInstaller } from "../../../libs/install/platforms/codex.js";
 
 const caseId = "update-working-memory-source-evidence-at-0438915";
 const baseCommit = "0438915ee216a28fa01fb8ff416be74272cb8691";
@@ -33,6 +35,7 @@ interface RunContext {
   targetRepoDir: string;
   targetRepoUrl: string;
   greplicaHomeDir: string;
+  codexHomeDir: string;
   seedProposalPath: string;
   sessionTranscriptPath: string;
   sessionTranscriptMarkdownPath: string;
@@ -215,18 +218,6 @@ interface ScoreResult {
   passed: boolean;
 }
 
-interface SessionTranscriptProjection {
-  metadata: Record<string, string>;
-  messages: SessionTranscriptMessage[];
-}
-
-interface SessionTranscriptMessage {
-  timestamp: string | undefined;
-  role: "human" | "agent";
-  phase: string | undefined;
-  message: string;
-}
-
 main().catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
@@ -280,6 +271,7 @@ function prepareRun(): RunContext {
   const targetRepoDir = resolve(runDir, "target-repo");
   const targetRepoUrl = process.env.GREPLICA_EVAL_TARGET_REPO_URL ?? repoRoot;
   const greplicaHomeDir = resolve(runDir, "greplica-home");
+  const codexHomeDir = resolve(runDir, "codex-home");
 
   mkdirSync(runDir, { recursive: true });
 
@@ -290,6 +282,7 @@ function prepareRun(): RunContext {
     targetRepoDir,
     targetRepoUrl,
     greplicaHomeDir,
+    codexHomeDir,
     seedProposalPath: resolve(runDir, "bootstrap-seed.proposal.json"),
     sessionTranscriptPath: resolve(runDir, "session.codex.jsonl"),
     sessionTranscriptMarkdownPath: resolve(runDir, "session.messages.md"),
@@ -315,10 +308,21 @@ function prepareTargetRepo(context: RunContext): void {
 
 function prepareGreplicaHome(context: RunContext): void {
   mkdirSync(context.greplicaHomeDir, { recursive: true });
+  mkdirSync(context.codexHomeDir, { recursive: true });
+  seedCodexRuntimeHome(context.codexHomeDir);
+}
+
+function seedCodexRuntimeHome(codexHomeDir: string): void {
+  const sourceHome = resolve(homedir(), ".codex");
+  for (const file of ["auth.json", "config.toml", "models_cache.json", ".codex-global-state.json", "installation_id"]) {
+    const source = resolve(sourceHome, file);
+    if (existsSync(source)) copyFileSync(source, resolve(codexHomeDir, file));
+  }
 }
 
 function seedBootstrapMemory(context: RunContext): CommandResult[] {
   return [
+    runProductCommand(context, "install", "--platform", "codex", "--embedding", "local"),
     runProductCommand(context, "proposal", "validate", context.seedProposalPath),
     runProductCommand(context, "proposal", "apply", context.seedProposalPath),
   ];
@@ -332,7 +336,7 @@ async function runUpdateAgent(context: RunContext, args: Args): Promise<AgentRun
   const model = args.agentModel ?? "gpt-5.4-mini";
   const result = await runCodexAgent({
     cwd: context.targetRepoDir,
-    env: { ...process.env, GREPLICA_HOME: context.greplicaHomeDir },
+    env: { ...process.env, CODEX_HOME: context.codexHomeDir, GREPLICA_HOME: context.greplicaHomeDir },
     model,
     prompt: codexUpdatePrompt(context),
     transcriptPath: resolve(context.runDir, "agent-events.jsonl"),
@@ -364,7 +368,11 @@ function readFinalGraph(context: RunContext): CommandResult {
 }
 
 function runProductCommand(context: RunContext, ...args: string[]): CommandResult {
-  const env = { ...process.env, GREPLICA_HOME: context.greplicaHomeDir };
+  const env = {
+    ...process.env,
+    CODEX_HOME: context.codexHomeDir,
+    GREPLICA_HOME: context.greplicaHomeDir,
+  };
   return run([...context.greplicaCommand, ...args], context.targetRepoDir, env);
 }
 
@@ -521,93 +529,10 @@ The proposal should update working memory with session-specific durable context.
 }
 
 function writeSessionTranscriptMarkdown(context: RunContext): void {
-  const projection = projectSessionTranscript(readFileSync(context.sessionTranscriptPath, "utf8"));
-  writeFileSync(context.sessionTranscriptMarkdownPath, renderSessionTranscriptMarkdown(projection));
-}
-
-function projectSessionTranscript(jsonl: string): SessionTranscriptProjection {
-  const metadata: Record<string, string> = {};
-  const messages: SessionTranscriptMessage[] = [];
-
-  for (const line of jsonl.split("\n")) {
-    const event = parseJsonLine(line);
-    if (!isRecord(event)) continue;
-
-    if (event.type === "session_meta" && isRecord(event.payload)) {
-      copyStringField(metadata, event.payload, "id", "session_id");
-      copyStringField(metadata, event.payload, "timestamp", "session_timestamp");
-      copyStringField(metadata, event.payload, "cwd", "cwd");
-      copyStringField(metadata, event.payload, "originator", "originator");
-      copyStringField(metadata, event.payload, "cli_version", "cli_version");
-      copyStringField(metadata, event.payload, "source", "source");
-      copyStringField(metadata, event.payload, "model_provider", "model_provider");
-      continue;
-    }
-
-    if (event.type !== "event_msg" || !isRecord(event.payload)) continue;
-    const payloadType = event.payload.type;
-    if (payloadType !== "user_message" && payloadType !== "agent_message") continue;
-
-    const message = event.payload.message;
-    if (typeof message !== "string" || message.trim().length === 0) continue;
-    const sanitizedMessage = sanitizeTranscriptMessage(message);
-    if (sanitizedMessage.length === 0) continue;
-    messages.push({
-      timestamp: typeof event.timestamp === "string" ? event.timestamp : undefined,
-      role: payloadType === "user_message" ? "human" : "agent",
-      phase: typeof event.payload.phase === "string" ? event.payload.phase : undefined,
-      message: sanitizedMessage,
-    });
-  }
-
-  return { metadata, messages };
-}
-
-function sanitizeTranscriptMessage(message: string): string {
-  return message
-    .replace(/<system_instruction>[\s\S]*?<\/system_instruction>\s*/g, "")
-    .replace(/<developer_instruction>[\s\S]*?<\/developer_instruction>\s*/g, "")
-    .trim();
-}
-
-function renderSessionTranscriptMarkdown(projection: SessionTranscriptProjection): string {
-  const sections = ["# Filtered Session Transcript", ""];
-
-  sections.push("## Metadata", "");
-  for (const [key, value] of Object.entries(projection.metadata)) {
-    sections.push(`- ${key}: ${value}`);
-  }
-  sections.push("", "## Messages", "");
-
-  for (const message of projection.messages) {
-    const details = [message.timestamp, message.phase].filter((item): item is string => item !== undefined);
-    const suffix = details.length === 0 ? "" : ` (${details.join(", ")})`;
-    sections.push(`### ${message.role}${suffix}`, "", message.message.trim(), "");
-  }
-
-  return `${sections.join("\n").trimEnd()}\n`;
-}
-
-function copyStringField(
-  target: Record<string, string>,
-  source: Record<string, unknown>,
-  sourceKey: string,
-  targetKey: string,
-): void {
-  const value = source[sourceKey];
-  if (typeof value === "string" && value.trim().length > 0) {
-    target[targetKey] = value;
-  }
-}
-
-function parseJsonLine(line: string): unknown | undefined {
-  const trimmed = line.trim();
-  if (trimmed.length === 0) return undefined;
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    return undefined;
-  }
+  writeFileSync(
+    context.sessionTranscriptMarkdownPath,
+    codexInstaller.transcriptToMarkdown(readFileSync(context.sessionTranscriptPath, "utf8")),
+  );
 }
 
 async function requestJudge(apiKey: string, model: string, input: JudgeInput): Promise<JudgeOutput> {
